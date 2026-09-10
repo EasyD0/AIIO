@@ -209,11 +209,14 @@ class SQLiteServe:
 
     @staticmethod
     def _is_real(r: dict) -> bool:
-        """真实问题(非误报/非无效/非错误): 用于结果过滤"""
-        return not (
-            r.get("false_alarm")
-            or r.get("valid_flag")
-            or r.get("error_flag")
+        """真实问题: 是有效发现(valid_flag) 且未被判误报(false_alarm) 且未出错(error_flag)。
+
+        语义与本项目 AIOutput 一致: 真实问题 valid_flag=True("未发现高分险问题" 的结果 valid_flag=False)。
+        """
+        return (
+            bool(r.get("valid_flag"))
+            and not r.get("false_alarm")
+            and not r.get("error_flag")
         )
 
     @staticmethod
