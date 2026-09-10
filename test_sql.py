@@ -56,11 +56,20 @@ def _fake_review(ai_input: AIInput, rule: str) -> list[AIOutput]:
 
 
 def main_test_sql():
+    """入口: 用 TemporaryDirectory 管临时 DB 的生命周期, 退出自动清理(不会再往系统临时目录漏文件)。"""
+    with tempfile.TemporaryDirectory(prefix="llmreview_") as tmp:
+        db = SQLiteServe(Path(tmp) / "review.db")
+        try:
+            _run(db)
+        finally:
+            db.close()  # 必须先关连接, Windows 才能删除临时目录
+
+
+def _run(db: SQLiteServe):
     print("=" * 62)
     print("验证 SQLiteServe: 去重(git_addr+identify+rule_code) 与 结果存档")
     print("=" * 62)
 
-    db = SQLiteServe(Path(tempfile.mkdtemp(prefix="llmreview_")) / "review.db")
     git_a = {"git_addr": "git@example:A.git", "git_branch": "main", "git_hash": "aaaa"}
     git_b = dict(git_a)
     git_b["git_addr"] = "git@example:B.git"
@@ -131,8 +140,8 @@ def main_test_sql():
     assert first_sd._identity == sd_b._identity
     assert len(first_sd._identity) == 64  # sha256 hex
 
-    db.close()
-    print("全部断言通过  (临时 DB: 通过 tempfile 自动清理)")
+    # db.close() 由 main_test_sql 统一负责, 这里不再关闭
+    print("全部断言通过  (临时 DB 目录已自动清理)")
 
 
 if __name__ == "__main__":
