@@ -1,4 +1,3 @@
-
 import asyncio
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -7,12 +6,12 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncGenerator, Iterable, Protocol
 
-from MyPyLib.FuncAnalysis import FuncAnalyser
-from MyPyLib.LogSet import logSetup
-from MyPyLib.Preprocessor import Preprocessor
 from aiohttp import ClientConnectorError, ClientSession, ServerDisconnectedError
 
 from AIIO import AIInput, AIOutput, AIOutput_location
+from MyPyLib.FuncAnalysis import FuncAnalyser
+from MyPyLib.LogSet import logSetup
+from MyPyLib.Preprocessor import Preprocessor
 from for_sqllite import sqlite_data, SQLiteServe
 from info_for_llm_review import get_func_info
 from prompt.prompt_chat import PromptGenerator
@@ -124,9 +123,7 @@ class _BaseChatYC:
     async def get_next_token(self) -> str:
         async with self._lock:
             token = self.tokenList[_BaseChatYC._token_idx]
-            _BaseChatYC._token_idx = (_BaseChatYC._token_idx + 1) % len(
-                self.tokenList
-            )
+            _BaseChatYC._token_idx = (_BaseChatYC._token_idx + 1) % len(self.tokenList)
             return token
 
     async def requestAI(self, content: str) -> str | None:
@@ -219,7 +216,9 @@ class arequestChatYC(_BaseChatYC):
         )
         return result
 
-    def _process_response(self, raw_text: str | None, ai_input: AIInput) -> list[AIOutput]:
+    def _process_response(
+        self, raw_text: str | None, ai_input: AIInput
+    ) -> list[AIOutput]:
         filename = ai_input.file or "未知文件路径"
         func_name = ai_input.FunctionName or "未知函数名"
 
@@ -602,6 +601,7 @@ class acheckChatYC(_BaseChatYC):
         )
         return self._process_response(raw_text, ai_output)
 
+
 # 将get_func_info 封装为异步函数, TODO可以用装饰器实现
 async def get_func_info_async(
     preprocessor: Preprocessor,
@@ -726,30 +726,100 @@ async def process_input(
     return res
 
 
+class arequestChatTest:
+    def __init__(
+        self,
+        rule: str = "AI走查-数组越界",
+        model: str = "Qwen3.5-397B-A17B",
+        session: ClientSession | None = None,
+    ):
+        self.model = model  # 默认模型
+        self.rule = rule  # 默认规则为代码走查
+        pass
+
+    async def do(self, ai_input: AIInput) -> list[AIOutput]:
+        """
+        将随机返回 error_flag 有效/无效的结果
+        """
+        if ai_input.error_flag:
+            return [AIOutput.from_bad_input(ai_input, self.rule, self.rule)]
+        filename = ai_input.file or "未知文件路径"
+        func_name = ai_input.FunctionName or "未知函数名"
+
+        err_output = AIOutput(
+            file=filename,
+            FunctionName=func_name,
+            description="AI接口出错, 无法返回结果",
+            ruleCode=self.rule,
+            title=self.rule,
+            chatAIOriginalRes="None",
+            error_flag=True,
+        )
+
+        null_output = AIOutput(
+            file=filename,
+            FunctionName=func_name,
+            description="未发现高置信度问题",
+            ruleCode=self.rule,
+            title=self.rule,
+            chatAIOriginalRes="# 未发现高置信度问题",
+        )
+
+        valid_output = AIOutput(
+            file=filename,
+            FunctionName=func_name,
+            location=AIOutput_location(startLine=1),
+            illegalCode="int i = 1.1 //错误代码",
+            description="问题描述",
+            severity="高",
+            ruleCode=self.rule,
+            title=self.rule,
+            chatAIOriginalRes="原始描述",
+            suggestion="修复建议",
+            valid_flag=True,
+        )
+
+        import random
+
+        num = random.randint(0, 2)
+        match num:
+            case 0:
+                res = [err_output]
+            case 1:
+                res = [null_output]
+            case 2:
+                res = [valid_output]
+            case _:
+                res = [valid_output]
+        return res
+
+
 async def TotalTask(
     entity: dict[Path, Iterable],  # 待走查的条目
     review_rules: Iterable[str],  # 要走查的规则集合
     por: Preprocessor,  # 预处理器
     context: ReviewContext,
-    git_data : dict,
+    git_data: dict,
     _sql: SQLiteServe,
     max_concurrent_ai: int = 4,  # 最大并发AI连接数
     need_check: bool = False,  # 是否需要检查
     progress_bar: ProgressBar = None,
+    just_test: bool = False,
 ) -> tuple[list[AIInput], list[AIOutput]]:
     semaphore = asyncio.Semaphore(max_concurrent_ai)
     logger.info(f"网络并发数量限制为: {max_concurrent_ai}")
     res_input: list[AIInput] = []
     res_output: list[AIOutput] = []
 
+    checker_type = arequestChatYC if not just_test else arequestChatTest
     # 为每个走查规则生成一个走查器对象
     reviewers: dict[str, AIReviewer_async] = {
-        rule: arequestChatYC(rule, context.reviewer_model, context.session)
+        rule: checker_type(rule, context.reviewer_model, context.session)
         for rule in review_rules
     }
 
     # 为每个走查规则生成一个检查器对象
-    if not need_check:
+    if just_test or not need_check:
         checkers: dict[str, AIChecker_async] = {}
     else:
         checkers: dict[str, AIChecker_async] = {
@@ -766,6 +836,7 @@ async def TotalTask(
         for rule in review_rules:
             # 检查下在数据库里是否存在, 如果存在则直接跳过
             if _sqlite_data.in_database(rule, _sql):
+                logger.debug("条目已在数据库中")
                 # 已走查过(同一仓库+同一身份+同一规则), 直接跳过
                 continue
 
@@ -799,4 +870,3 @@ async def TotalTask(
             else:
                 logger.error(f"未知走查任务发生异常: {e}")
     return res_input, res_output
-
